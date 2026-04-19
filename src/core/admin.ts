@@ -545,6 +545,33 @@ body::before{
     </div>
   </div>
 
+  <!-- MacCMS Add -->
+  <div class="section">
+    <div class="section-title">Add MacCMS Source</div>
+    <div class="add-form">
+      <input class="name-input" type="text" id="mcKey" placeholder="Key (e.g. hongniuzy)">
+      <input class="name-input" type="text" id="mcName" placeholder="Name">
+      <input type="url" id="mcApi" placeholder="MacCMS API URL">
+      <button class="btn" id="mcAddBtn" onclick="addMacCMS()">Add</button>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button class="btn btn-sm" onclick="showBatchImport()">Batch Import</button>
+    </div>
+    <textarea id="mcBatchInput" style="display:none;width:100%;margin-top:8px;min-height:120px;font-family:var(--mono);font-size:0.75rem;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:#fff;resize:vertical" placeholder='[{"key":"...","name":"...","api":"..."}]'></textarea>
+    <button class="btn btn-sm" id="mcBatchBtn" style="display:none;margin-top:8px" onclick="batchImportMacCMS()">Submit Batch</button>
+  </div>
+
+  <!-- MacCMS list -->
+  <div class="section">
+    <div class="section-title">
+      <span>MacCMS Sources</span>
+      <span class="count" id="mcCount">0</span>
+    </div>
+    <div class="source-list" id="mcList">
+      <div class="empty">Loading MacCMS sources...</div>
+    </div>
+  </div>
+
   <div class="footer">
     TVBox Source Aggregator &middot; Admin Console
   </div>
@@ -614,6 +641,7 @@ function toast(msg, type = 'success') {
 // --- Load data ---
 function loadAll() {
   loadSources();
+  loadMacCMS();
   loadStatus();
 }
 
@@ -725,6 +753,129 @@ async function removeSource(url) {
   } catch {
     toast('Network error', 'error');
   }
+}
+
+// --- MacCMS ---
+async function loadMacCMS() {
+  const list = $('mcList');
+  try {
+    const res = await authFetch('/admin/maccms');
+    const sources = await res.json();
+    $('mcCount').textContent = sources.length;
+
+    if (sources.length === 0) {
+      list.innerHTML = '<div class="empty">No MacCMS sources. Add above or use batch import.</div>';
+      return;
+    }
+
+    list.innerHTML = sources.map(s => \`
+      <div class="source-item">
+        <span class="source-tag manual">\${esc(s.key)}</span>
+        <div class="source-info">
+          <div class="source-name">\${esc(s.name)}</div>
+          <div class="source-url">\${esc(s.api)}</div>
+        </div>
+        <div class="source-actions" style="display:flex;gap:6px">
+          <button class="btn btn-sm" onclick="validateMC('\${esc(s.api)}')">Test</button>
+          <button class="btn btn-sm btn-danger" onclick="removeMC('\${esc(s.key)}')">Remove</button>
+        </div>
+      </div>
+    \`).join('');
+  } catch {
+    list.innerHTML = '<div class="empty">Failed to load MacCMS sources</div>';
+  }
+}
+
+async function addMacCMS() {
+  const key = $('mcKey').value.trim();
+  const name = $('mcName').value.trim();
+  const api = $('mcApi').value.trim();
+  if (!key || !name || !api) { toast('All fields required', 'error'); return; }
+
+  const btn = $('mcAddBtn');
+  btn.textContent = 'Adding...';
+  btn.className = 'btn loading';
+
+  try {
+    const res = await authFetch('/admin/maccms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, name, api })
+    });
+    const d = await res.json();
+    if (res.ok) {
+      toast('Added ' + (d.added || 1) + ' MacCMS source(s)');
+      $('mcKey').value = '';
+      $('mcName').value = '';
+      $('mcApi').value = '';
+      loadMacCMS();
+    } else {
+      toast(d.error || 'Failed', 'error');
+    }
+  } catch { toast('Network error', 'error'); }
+
+  btn.textContent = 'Add';
+  btn.className = 'btn';
+}
+
+async function removeMC(key) {
+  try {
+    const res = await authFetch('/admin/maccms', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key })
+    });
+    if (res.ok) { toast('Removed'); loadMacCMS(); }
+    else { const d = await res.json(); toast(d.error || 'Failed', 'error'); }
+  } catch { toast('Network error', 'error'); }
+}
+
+async function validateMC(api) {
+  toast('Testing...');
+  try {
+    const res = await authFetch('/admin/maccms/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api })
+    });
+    const d = await res.json();
+    toast(d.valid ? 'Valid' : 'Invalid / Unreachable', d.valid ? 'success' : 'error');
+  } catch { toast('Network error', 'error'); }
+}
+
+function showBatchImport() {
+  const ta = $('mcBatchInput');
+  const btn = $('mcBatchBtn');
+  const show = ta.style.display === 'none';
+  ta.style.display = show ? 'block' : 'none';
+  btn.style.display = show ? 'inline-block' : 'none';
+  if (show) ta.focus();
+}
+
+async function batchImportMacCMS() {
+  const raw = $('mcBatchInput').value.trim();
+  if (!raw) return;
+  let data;
+  try { data = JSON.parse(raw); } catch { toast('Invalid JSON', 'error'); return; }
+  if (!Array.isArray(data)) { toast('Must be a JSON array', 'error'); return; }
+
+  try {
+    const res = await authFetch('/admin/maccms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const d = await res.json();
+    if (res.ok) {
+      toast('Imported ' + (d.added || 0) + ' source(s)');
+      $('mcBatchInput').value = '';
+      $('mcBatchInput').style.display = 'none';
+      $('mcBatchBtn').style.display = 'none';
+      loadMacCMS();
+    } else {
+      toast(d.error || 'Import failed', 'error');
+    }
+  } catch { toast('Network error', 'error'); }
 }
 
 // --- Refresh ---

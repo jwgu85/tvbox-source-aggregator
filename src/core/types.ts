@@ -75,6 +75,13 @@ export interface TVBoxConfig {
   flags?: string[];
 }
 
+// MacCMS 源条目
+export interface MacCMSSourceEntry {
+  key: string;    // TVBox site key，如 "hongniuzy"
+  name: string;   // 显示名，如 "红牛资源站"
+  api: string;    // 原始 API，如 "https://www.hongniuzy2.com/api.php/provide/vod/from/hnm3u8/at/json/"
+}
+
 // 源条目
 export interface SourceEntry {
   name: string;

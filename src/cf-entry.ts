@@ -35,9 +35,7 @@ export default {
     const app = createApp({
       storage,
       config,
-      triggerRefresh: () => {
-        ctx.waitUntil(runAggregation(storage, config));
-      },
+      triggerRefresh: () => runAggregation(storage, config),
     });
 
     return app.fetch(request);

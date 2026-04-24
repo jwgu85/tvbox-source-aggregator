@@ -65,6 +65,7 @@ export interface TVBoxConfig {
   spider?: string;
   jarCache?: boolean | string;
   wallpaper?: string;
+  pic?: string; // 图片代理前缀，TVBox 客户端加载图片时自动拼接
   sites?: TVBoxSite[];
   parses?: TVBoxParse[];
   lives?: TVBoxLive[];

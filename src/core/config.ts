@@ -45,6 +45,9 @@ export const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
 export const KV_CRON_INTERVAL = 'cron_interval';
 export const DEFAULT_CRON_INTERVAL = 1440; // 默认每天一次
 
+// 边缘函数代理
+export const KV_EDGE_PROXIES = 'edge_proxies';
+
 // JAR 仓库
 export const KV_JAR_REGISTRY = 'jar_registry';
 export const KV_JAR_REGISTRY_ENABLED = 'jar_registry_enabled';

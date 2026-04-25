@@ -16,15 +16,21 @@ export interface FetchConfigsResult {
  * 自动检测多仓格式（storeHouse / urls），递归展开（最多 3 层）
  * 返回成功获取的配置列表 + 每个源的 fetch 结果（含失败原因）
  */
+export interface FetchProxyConfig {
+  urls: string[];   // 代理端点列表，如 ["https://tvbox.rio.edu.kg/fetch-proxy", "https://fetch.riowang.win/api/proxy"]
+  token?: string;   // 认证 token（CF fetch-proxy 需要）
+}
+
 export async function fetchConfigs(
   sources: SourceEntry[],
   timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+  proxyConfig?: FetchProxyConfig,
 ): Promise<FetchConfigsResult> {
   const configs: SourcedConfig[] = [];
   const fetchResults: SourceFetchResult[] = [];
   const seen = new Set<string>(); // URL 去重，防循环引用
 
-  await expandSources(sources, configs, fetchResults, seen, timeoutMs, 0);
+  await expandSources(sources, configs, fetchResults, seen, timeoutMs, 0, proxyConfig);
 
   console.log(`[fetcher] Fetched ${configs.length} configs from ${sources.length} top-level sources`);
   return { configs, fetchResults };
@@ -40,6 +46,7 @@ async function expandSources(
   seen: Set<string>,
   timeoutMs: number,
   depth: number,
+  proxyConfig?: FetchProxyConfig,
 ): Promise<void> {
   // 去重
   const uniqueSources = sources.filter(s => {
@@ -54,7 +61,7 @@ async function expandSources(
   console.log(`[fetcher] Fetching ${uniqueSources.length} sources${tag}...`);
 
   const results = await Promise.allSettled(
-    uniqueSources.map((source) => fetchSingleConfig(source, timeoutMs)),
+    uniqueSources.map((source) => fetchSingleConfig(source, timeoutMs, proxyConfig)),
   );
 
   const multiRepoChildren: SourceEntry[] = [];
@@ -100,7 +107,7 @@ async function expandSources(
 
   // 递归展开子多仓
   if (multiRepoChildren.length > 0) {
-    await expandSources(multiRepoChildren, configs, fetchResults, seen, timeoutMs, depth + 1);
+    await expandSources(multiRepoChildren, configs, fetchResults, seen, timeoutMs, depth + 1, proxyConfig);
   }
 }
 
@@ -115,6 +122,7 @@ interface SingleFetchResult {
 async function fetchSingleConfig(
   source: SourceEntry,
   timeoutMs: number,
+  proxyConfig?: FetchProxyConfig,
 ): Promise<SingleFetchResult> {
   // 双 UA 回退：先用 okhttp（TVBox 原生），解析失败换浏览器 UA 重试
   const result = await fetchWithUA(source, timeoutMs, TVBOX_UA);
@@ -123,10 +131,85 @@ async function fetchSingleConfig(
   // okhttp 失败 → 浏览器 UA 重试（部分源只接受浏览器 UA）
   if (result.fetchResult.status === 'parse_error' || result.fetchResult.status === 'decode_error') {
     console.log(`[fetcher] Retrying ${source.url} with browser UA`);
-    return fetchWithUA(source, timeoutMs, BROWSER_UA);
+    const browserResult = await fetchWithUA(source, timeoutMs, BROWSER_UA);
+    if (browserResult.config) return browserResult;
+  }
+
+  // 直连失败（timeout/network_error/http_error）→ 通过边缘代理重试
+  if (proxyConfig?.urls.length && isProxyRetriable(result.fetchResult.status)) {
+    for (const proxyUrl of proxyConfig.urls) {
+      console.log(`[fetcher] Retrying ${source.url} via proxy ${proxyUrl.substring(0, 40)}...`);
+      const proxyResult = await fetchViaProxy(source, timeoutMs, proxyUrl, proxyConfig.token);
+      if (proxyResult.config) return proxyResult;
+    }
   }
 
   return result;
+}
+
+function isProxyRetriable(status: string): boolean {
+  return status === 'timeout' || status === 'network_error' || status === 'http_error';
+}
+
+async function fetchViaProxy(
+  source: SourceEntry,
+  timeoutMs: number,
+  proxyUrl: string,
+  token?: string,
+): Promise<SingleFetchResult> {
+  const url = `${proxyUrl}?url=${encodeURIComponent(source.url)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const startTime = Date.now();
+    const headers: Record<string, string> = {
+      'Accept': 'application/json, text/plain, */*',
+      'X-Proxy-UA': TVBOX_UA,
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(url, { signal: controller.signal, headers });
+
+    if (!response.ok) {
+      return {
+        config: null,
+        fetchResult: { url: source.url, name: source.name, status: 'http_error', errorMessage: `Proxy: HTTP ${response.status}` },
+      };
+    }
+
+    const buffer = await response.arrayBuffer();
+    const decoded = await decodeConfigResponse(buffer, source.configKey);
+    if (!decoded) {
+      return {
+        config: null,
+        fetchResult: { url: source.url, name: source.name, status: 'decode_error', errorMessage: 'Proxy: Undecodable' },
+      };
+    }
+
+    const config = parseConfigJson(decoded);
+    if (!config) {
+      return {
+        config: null,
+        fetchResult: { url: source.url, name: source.name, status: 'parse_error', errorMessage: 'Proxy: Invalid JSON' },
+      };
+    }
+
+    const speedMs = Date.now() - startTime;
+    console.log(`[fetcher] Proxy success for ${source.url} (${speedMs}ms)`);
+    return {
+      config,
+      fetchResult: { url: source.url, name: source.name, status: 'ok', speedMs },
+    };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return {
+      config: null,
+      fetchResult: { url: source.url, name: source.name, status: 'network_error', errorMessage: `Proxy: ${msg}` },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchWithUA(

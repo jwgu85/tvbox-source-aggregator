@@ -154,6 +154,12 @@ export interface AppConfig {
   workerBaseUrl?: string;  // CF 版设置，如 "https://tvbox.example.com"；本地不设置
 }
 
+// 边缘函数代理配置
+export interface EdgeProxyConfig {
+  cf?: string;      // CF Worker URL，如 "https://tvbox.rio.edu.kg"
+  vercel?: string;  // Vercel 代理 URL，如 "https://fetch.riowang.win"
+}
+
 // JAR 仓库：单个 JAR 的元数据
 export interface JarMeta {
   url: string;

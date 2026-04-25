@@ -333,6 +333,25 @@ ${sharedStyles}
     </div>
 
     <div class="section">
+      <div class="section-title" data-i18n="edgeProxies">Edge Function Proxies</div>
+      <div style="margin-bottom:6px;font-size:0.8rem;color:var(--text-secondary)" data-i18n="edgeProxiesDesc">Configure edge function URLs for proxy fallback (fetch retry + image CDN). Local Docker mode only.</div>
+      <div class="nt-grid">
+        <div>
+          <label class="form-label">Cloudflare Worker URL</label>
+          <input type="text" id="edgeCfUrl" class="nt-input" placeholder="https://tvbox.example.com">
+        </div>
+        <div>
+          <label class="form-label">Vercel Proxy URL</label>
+          <input type="text" id="edgeVercelUrl" class="nt-input" placeholder="https://fetch.example.com">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button class="btn btn-sm" onclick="saveEdgeProxies()" data-i18n="save">Save</button>
+        <span class="status-text" id="edgeProxiesStatus" style="font-family:var(--mono);font-size:0.75rem"></span>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="section-title" data-i18n="jarRegistry">JAR Registry</div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -431,6 +450,7 @@ const translations = {
     ntPromoReplacePh:'e.g. Premium', ntExtraPatternsPh:'e.g. sponsor[：:]\\\\S+',
     cronInterval:'Aggregation Schedule',
     speedTestToggle:'Site Speed Test', speedTestLabel:'Enable site speed test and unreachable filtering', speedTestDesc:'When disabled, all sites are kept without testing reachability',
+    edgeProxies:'Edge Function Proxies', edgeProxiesDesc:'Configure edge function URLs for proxy fallback (fetch retry + image CDN). Local Docker mode only.',
     jarRegistry:'JAR Registry', jarRegistryLabel:'Enable JAR registry analysis (precise class matching)', jarRegistryDesc:'Downloads JARs and parses DEX to extract class names for precise spider assignment',
     refreshJarRegistry:'Refresh JAR Registry', viewReport:'View Report', jarRegistryDisabled:'Not enabled',
     jarCount:'JARs', totalClasses:'Total classes', lastScanned:'Last scanned',
@@ -484,6 +504,7 @@ const translations = {
     ntPromoReplacePh:'如 精选推荐', ntExtraPatternsPh:'如 sponsor[：:]\\\\S+',
     cronInterval:'聚合频率',
     speedTestToggle:'站点测速', speedTestLabel:'启用站点测速与不可达剔除', speedTestDesc:'关闭后保留所有站点，不进行可达性检测',
+    edgeProxies:'边缘函数代理', edgeProxiesDesc:'配置边缘函数 URL，用于本地 Docker 模式的请求代理回退和图片 CDN 加速',
     jarRegistry:'JAR 仓库', jarRegistryLabel:'启用 JAR 仓库分析（精确匹配类名）', jarRegistryDesc:'启用后聚合时会下载 JAR 并解析 DEX 提取类名，用于精确分配 spider',
     refreshJarRegistry:'刷新 JAR 仓库', viewReport:'查看报告', jarRegistryDisabled:'未启用',
     jarCount:'JAR 数量', totalClasses:'总类名', lastScanned:'上次扫描',
@@ -543,6 +564,7 @@ async function loadAll() {
   loadNameTransform();
   loadCronInterval();
   loadSpeedTest();
+  loadEdgeProxies();
   loadJarRegistry();
 }
 
@@ -1019,6 +1041,40 @@ async function saveSpeedTest() {
     status.className = 'status-text error';
   }
 
+  setTimeout(() => { status.textContent = ''; }, 3000);
+}
+
+// --- Edge Proxies ---
+async function loadEdgeProxies() {
+  try {
+    const res = await auth.authFetch('/admin/edge-proxies');
+    if (res.ok) {
+      const d = await res.json();
+      $('edgeCfUrl').value = d.cf || '';
+      $('edgeVercelUrl').value = d.vercel || '';
+    }
+  } catch {}
+}
+
+async function saveEdgeProxies() {
+  const status = $('edgeProxiesStatus');
+  try {
+    const res = await auth.authFetch('/admin/edge-proxies', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cf: $('edgeCfUrl').value.trim(), vercel: $('edgeVercelUrl').value.trim() })
+    });
+    if (res.ok) {
+      status.textContent = t('saved');
+      status.className = 'status-text success';
+    } else {
+      status.textContent = t('saveFailed');
+      status.className = 'status-text error';
+    }
+  } catch {
+    status.textContent = t('networkError');
+    status.className = 'status-text error';
+  }
   setTimeout(() => { status.textContent = ''; }, 3000);
 }
 

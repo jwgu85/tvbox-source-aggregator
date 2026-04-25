@@ -3,7 +3,7 @@
 import { Hono } from 'hono';
 import type { Storage } from './storage/interface';
 import type { AppConfig, SourceEntry, MacCMSSourceEntry, LiveSourceEntry, NameTransformConfig } from './core/types';
-import { KV_MERGED_CONFIG, KV_MERGED_CONFIG_FULL, KV_MANUAL_SOURCES, KV_LAST_UPDATE, KV_MACCMS_SOURCES, KV_LIVE_SOURCES, KV_BLACKLIST, LIVE_PROXY_TTL, IMG_PROXY_TTL, KV_INLINE_PREFIX, KV_NAME_TRANSFORM, KV_CRON_INTERVAL, DEFAULT_CRON_INTERVAL, KV_SOURCE_HEALTH, KV_SPEED_TEST_ENABLED, KV_JAR_REGISTRY_ENABLED, KV_JAR_REGISTRY, KV_JAR_BIN_PREFIX } from './core/config';
+import { KV_MERGED_CONFIG, KV_MERGED_CONFIG_FULL, KV_MANUAL_SOURCES, KV_LAST_UPDATE, KV_MACCMS_SOURCES, KV_LIVE_SOURCES, KV_BLACKLIST, LIVE_PROXY_TTL, IMG_PROXY_TTL, KV_INLINE_PREFIX, KV_NAME_TRANSFORM, KV_CRON_INTERVAL, DEFAULT_CRON_INTERVAL, KV_SOURCE_HEALTH, KV_SPEED_TEST_ENABLED, KV_JAR_REGISTRY_ENABLED, KV_JAR_REGISTRY, KV_JAR_BIN_PREFIX, KV_EDGE_PROXIES } from './core/config';
 import { parseConfigJson, isMultiRepoConfig, extractMultiRepoEntries } from './core/fetcher';
 import { decodeConfigResponse } from './core/decoder';
 import { validateMacCMS } from './core/maccms';
@@ -398,6 +398,63 @@ export function createApp(deps: AppDeps): Hono {
     await storage.put(KV_SPEED_TEST_ENABLED, String(body.enabled));
     return c.json({ success: true, enabled: body.enabled });
   });
+
+  // ─── 边缘函数代理配置 Admin API ──────────────────────
+  app.get('/admin/edge-proxies', async (c) => {
+    if (!verifyAdmin(c.req.raw, config)) return c.json({ error: 'Unauthorized' }, 401);
+    const raw = await storage.get(KV_EDGE_PROXIES);
+    return c.json(raw ? JSON.parse(raw) : {});
+  });
+
+  app.put('/admin/edge-proxies', async (c) => {
+    if (!verifyAdmin(c.req.raw, config)) return c.json({ error: 'Unauthorized' }, 401);
+    let body: { cf?: string; vercel?: string };
+    try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+    // 清理尾部斜杠
+    const clean = {
+      cf: body.cf?.replace(/\/+$/, '') || undefined,
+      vercel: body.vercel?.replace(/\/+$/, '') || undefined,
+    };
+    await storage.put(KV_EDGE_PROXIES, JSON.stringify(clean));
+    return c.json({ success: true, ...clean });
+  });
+
+  // ─── Fetch 代理端点（仅 CF 版，供本地 Docker 中转请求）──
+  if (config.workerBaseUrl) {
+    app.get('/fetch-proxy', async (c) => {
+      // 认证：adminToken 或 refreshToken
+      const auth = c.req.raw.headers.get('Authorization');
+      const validTokens = [config.adminToken, config.refreshToken].filter(Boolean);
+      if (validTokens.length > 0 && !validTokens.some((t) => auth === `Bearer ${t}`)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+
+      const targetUrl = c.req.query('url');
+      if (!targetUrl || (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://'))) {
+        return c.json({ error: 'Missing or invalid ?url= parameter' }, 400);
+      }
+
+      try {
+        const resp = await fetch(targetUrl, {
+          headers: {
+            'User-Agent': c.req.header('X-Proxy-UA') || 'okhttp/3.12.0',
+          },
+          redirect: 'follow',
+        });
+
+        return new Response(resp.body, {
+          status: resp.status,
+          headers: {
+            'Content-Type': resp.headers.get('Content-Type') || 'application/octet-stream',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return c.json({ error: msg }, 502);
+      }
+    });
+  }
 
   // ─── JAR 仓库 Admin API ──────────────────────────────
   app.get('/admin/jar-registry/enabled', async (c) => {
